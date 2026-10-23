@@ -197,10 +197,19 @@ async function loadDirectoryFromCloud(){
  cloudReady=true;
 }
 function saveLocalOnly(){localStorage.setItem(STORAGE.sites,JSON.stringify(sites));localStorage.setItem(STORAGE.cats,JSON.stringify(categories));localStorage.setItem(STORAGE.favs,JSON.stringify([...favorites]));localStorage.setItem(STORAGE.recent,JSON.stringify(recent))}
+let cloudRealtimeChannel=null;
+function subscribeDirectoryRealtime(){
+ if(cloudRealtimeChannel) return;
+ cloudRealtimeChannel=supabaseClient.channel('public-directory-live')
+  .on('postgres_changes',{event:'*',schema:'public',table:'categories'},()=>{if(cloudReady&&!cloudSyncing)loadDirectoryFromCloud().catch(e=>console.error('Realtime categories:',e))})
+  .on('postgres_changes',{event:'*',schema:'public',table:'websites'},()=>{if(cloudReady&&!cloudSyncing)loadDirectoryFromCloud().catch(e=>console.error('Realtime websites:',e))})
+  .subscribe();
+}
 async function initCloud(){
  try{const {data:{session}}=await supabaseClient.auth.getSession();cloudUser=session?.user||null;
   const {data:cats,error}=await supabaseClient.from('categories').select('id').limit(1);if(error)throw error;
   await loadDirectoryFromCloud();
+  subscribeDirectoryRealtime();
   if(cloudUser){const {data:adminRow,error:adminErr}=await supabaseClient.from('admin_users').select('user_id').eq('user_id',cloudUser.id).maybeSingle();if(adminErr)throw adminErr;cloudAdmin=!!adminRow;if(cloudAdmin&&!(cats||[]).length){await syncDirectoryToCloud();await loadDirectoryFromCloud()}}
  }catch(e){console.error('Supabase init:',e);toast('Cloud database-এ সংযোগ হয়নি। আপাতত local data দেখানো হচ্ছে।')}
 }
