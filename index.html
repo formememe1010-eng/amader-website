@@ -229,8 +229,37 @@ function renderRecent(){const list=recent.map(id=>sites.find(s=>s.id===id&&s.act
 function setupPricingFilters(){const entries=[['all','সব'],['free','একদম ফ্রি'],['limited','ফ্রি ও সীমিত সুবিধা'],['paid','পেইড / সাবস্ক্রিপশন']];$('#pricingFilters').innerHTML=entries.map(([id,label])=>`<button class="filter-pill ${pricingFilter===id?'active':''}" data-price-filter="${id}">${label}</button>`).join('')}
 function renderDirectory(){setupPricingFilters();const all=visibleSites();$('#directoryGrid').innerHTML=all.map(siteCard).join('');$('#directoryEmpty').classList.toggle('hide',all.length>0);$('#resultCount').textContent=bnNum(all.length)+'টি ওয়েবসাইট';$('#resultsCaption').textContent=searchTerm?'“'+searchTerm+'” খুঁজে পাওয়া ফলাফল':selectedCategory!=='all'?categoryById(selectedCategory).nameBn+' ক্যাটাগরির বাছাই করা ওয়েবসাইট':'বাছাই করা website-এ সরাসরি যেতে কার্ডে ক্লিক করুন';$('#directoryTitle').textContent=directoryMode==='favorites'?'পছন্দের তালিকা':directoryMode==='recent'?'সাম্প্রতিক দেখা':directoryMode==='free'?'ফ্রি ওয়েবসাইট':directoryMode==='paid'?'পেইড / সাবস্ক্রিপশন':selectedCategory!=='all'?categoryById(selectedCategory).nameBn:searchTerm?'খোঁজার ফলাফল':'সব ওয়েবসাইট';$('#directorySubtitle').textContent=directoryMode==='paid'?'Paid subscription বা paid features দেওয়া service':directoryMode==='favorites'?'আপনার সংরক্ষণ করা পছন্দের website':'আপনার আগ্রহের জন্য বাছাই করা ভালো website';$('#directoryEyebrow').textContent=directoryMode==='paid'?'PREMIUM PICKS':directoryMode==='favorites'?'YOUR COLLECTION':'CURATED DIRECTORY';$('#categoryFilter').value=selectedCategory}
 function openAdminLogin(){
- $('#modalRoot').innerHTML=`<div class="modal-backdrop" data-backdrop><div class="modal" style="max-width:430px" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle"><div class="modal-head"><h2 id="adminLoginTitle">🔐 Admin প্রবেশ</h2><button class="close-modal" data-close-modal aria-label="বন্ধ করুন">×</button></div><p class="modal-footnote">আপনার Supabase Auth email ও password দিন।</p><form id="adminLoginForm"><div class="field"><label for="adminEmail">ইমেইল</label><input id="adminEmail" type="email" required autocomplete="username" placeholder="আপনার admin email"/></div><div class="field"><label for="adminPassword">পাসওয়ার্ড</label><input id="adminPassword" type="password" required autocomplete="current-password" placeholder="পাসওয়ার্ড লিখুন"/></div><p id="adminLoginError" role="alert" style="display:none;color:#c66f7e;font-size:13px;margin:0 0 14px"></p><div class="form-actions"><button type="button" class="secondary-btn" data-close-modal>বাতিল</button><button type="submit" class="primary-btn">প্রবেশ করুন</button></div></form><p class="modal-footnote" style="margin-top:14px">শুধু Supabase-এর admin_users তালিকায় থাকা account-ই পরিবর্তন করতে পারবে।</p></div></div>`;
+ $('#modalRoot').innerHTML=`<div class="modal-backdrop" data-backdrop><div class="modal" style="max-width:430px" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle"><div class="modal-head"><h2 id="adminLoginTitle">🔐 Admin প্রবেশ</h2><button class="close-modal" data-close-modal aria-label="বন্ধ করুন">×</button></div><p class="modal-footnote">আপনার Supabase Auth email ও password দিন।</p><form id="adminLoginForm"><div class="field"><label for="adminEmail">ইমেইল</label><input id="adminEmail" type="email" required autocomplete="username" placeholder="আপনার admin email"/></div><div class="field"><label for="adminPassword">পাসওয়ার্ড</label><input id="adminPassword" type="password" required autocomplete="current-password" placeholder="পাসওয়ার্ড লিখুন"/></div><p id="adminLoginError" role="alert" style="display:none;color:#c66f7e;font-size:13px;margin:0 0 14px"></p><div class="form-actions"><button type="button" class="secondary-btn" data-close-modal>বাতিল</button><button type="submit" class="primary-btn">প্রবেশ করুন</button></div></form><button type="button" id="forgotPasswordBtn" class="text-action" style="margin-top:12px">পাসওয়ার্ড ভুলে গেছেন? Reset link পাঠান</button><p id="resetEmailStatus" class="modal-footnote" style="margin-top:8px"></p><p class="modal-footnote" style="margin-top:14px">শুধু Supabase-এর admin_users তালিকায় থাকা account-ই পরিবর্তন করতে পারবে।</p></div></div>`;
  $('#adminEmail').focus();
+}
+async function sendPasswordReset(){
+ const email=$('#adminEmail').value.trim(),status=$('#resetEmailStatus'),btn=$('#forgotPasswordBtn');
+ if(!email){status.textContent='আগে আপনার admin email লিখুন।';$('#adminEmail').focus();return}
+ btn.disabled=true;status.textContent='Recovery email পাঠানো হচ্ছে…';
+ try{
+  const {error}=await supabaseClient.auth.resetPasswordForEmail(email,{redirectTo:window.location.origin+window.location.pathname});
+  if(error)throw error;
+  status.textContent='ইমেইল পাঠানো হয়েছে। Link খুলে নতুন password সেট করুন। Spam folder-ও দেখুন।';
+ }catch(err){status.textContent='Email পাঠানো যায়নি: '+(err.message||'আবার চেষ্টা করুন।')}
+ finally{btn.disabled=false}
+}
+async function handleRecoveryLink(){
+ if(!window.location.hash.includes('type=recovery'))return;
+ try{
+  const {data,error}=await supabaseClient.auth.getSession();if(error)throw error;
+  if(!data.session){toast('Recovery link-এর session পাওয়া যায়নি। নতুন link পাঠান।');return}
+  $('#modalRoot').innerHTML=`<div class="modal-backdrop"><div class="modal" style="max-width:430px" role="dialog" aria-modal="true"><div class="modal-head"><h2>নতুন Admin Password</h2></div><p class="modal-footnote">নতুন password দিন।</p><form id="newPasswordForm"><div class="field"><label for="newAdminPassword">নতুন password</label><input id="newAdminPassword" type="password" minlength="8" required autocomplete="new-password" placeholder="কমপক্ষে ৮ অক্ষর"/></div><div class="field"><label for="confirmAdminPassword">আবার লিখুন</label><input id="confirmAdminPassword" type="password" minlength="8" required autocomplete="new-password" placeholder="একই password আবার লিখুন"/></div><p id="newPasswordStatus" class="modal-footnote" role="alert"></p><div class="form-actions"><button type="submit" class="primary-btn">Password পরিবর্তন করুন</button></div></form></div></div>`;
+  history.replaceState(null,document.title,window.location.pathname);
+ }catch(err){toast('Recovery link যাচাই করা যায়নি। নতুন link পাঠান।')}
+}
+async function submitNewPassword(e){
+ e.preventDefault();const p=$('#newAdminPassword').value,q=$('#confirmAdminPassword').value,status=$('#newPasswordStatus'),btn=e.target.querySelector('button[type="submit"]');
+ if(p.length<8){status.textContent='কমপক্ষে ৮ অক্ষরের password দিন।';return}
+ if(p!==q){status.textContent='দুটি password মেলেনি।';return}
+ btn.disabled=true;status.textContent='পরিবর্তন হচ্ছে…';
+ try{const {error}=await supabaseClient.auth.updateUser({password:p});if(error)throw error;await supabaseClient.auth.signOut();closeModal();toast('Password পরিবর্তন হয়েছে। এখন নতুন password দিয়ে login করুন।');showView('home')}
+ catch(err){status.textContent='Password পরিবর্তন হয়নি: '+(err.message||'নতুন recovery link চেষ্টা করুন।')}
+ finally{btn.disabled=false}
 }
 async function submitAdminLogin(e){
  e.preventDefault();const btn=e.target.querySelector('button[type="submit"]'),error=$('#adminLoginError');btn.disabled=true;btn.textContent='যাচাই হচ্ছে…';error.style.display='none';
@@ -310,7 +339,8 @@ document.addEventListener('click',e=>{const mv=e.target.closest('[data-mobile-vi
 $('#adminNavBtn').addEventListener('click',()=>showView('admin'));$('#footerAdmin').addEventListener('click',()=>showView('admin'));$('#backToHome').addEventListener('click',()=>showView('home'));
 $('#categoryFilter').addEventListener('change',e=>{selectedCategory=e.target.value;renderDirectory()});$('#sortSelect').addEventListener('change',e=>{sortMode=e.target.value;renderDirectory()});
 $('#addSiteBtn').addEventListener('click',()=>openSiteModal());$('#addCatBtn').addEventListener('click',()=>openCategoryModal());$('#siteForm')?.addEventListener('submit',saveSiteForm);
-document.addEventListener('submit',e=>{if(e.target.id==='adminLoginForm')submitAdminLogin(e);if(e.target.id==='siteForm')saveSiteForm(e);if(e.target.id==='catForm')saveCategoryForm(e)});
+document.addEventListener('click',e=>{if(e.target.closest('#forgotPasswordBtn'))sendPasswordReset()});
+document.addEventListener('submit',e=>{if(e.target.id==='newPasswordForm')submitNewPassword(e);if(e.target.id==='adminLoginForm')submitAdminLogin(e);if(e.target.id==='siteForm')saveSiteForm(e);if(e.target.id==='catForm')saveCategoryForm(e)});
 $('#adminSiteSearch').addEventListener('input',renderAdminSites);$('#adminCatSearch').addEventListener('input',renderAdminCats);$('#exportBtn').addEventListener('click',downloadJSON);$('#importBtn').addEventListener('click',()=>$('#importFile').click());$('#importFile').addEventListener('change',e=>{const file=e.target.files?.[0];if(file)importJSONFile(file);e.target.value=''});$('#resetDataBtn').addEventListener('click',resetSeed);
 // Home page direct category click is delegated above; keyboard shortcut focuses search.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modalRoot').innerHTML)closeModal();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showView('home');$('#heroSearch').focus()} });
@@ -319,6 +349,7 @@ $('#year').textContent=new Date().getFullYear();
 try{if(!Array.isArray(categories)||!Array.isArray(sites))throw new Error();}catch{categories=clone(SEED_CATEGORIES);sites=clone(SEED_SITES);saveLocalOnly()}
 renderAll();
 initCloud();
+handleRecoveryLink();
 </script>
 </body>
 </html>
