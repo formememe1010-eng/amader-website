@@ -117,7 +117,12 @@ body:before{content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;bac
 <footer class="footer"><div class="footer-brand"><div>© <span id="year"></span> <strong>আমাদের দেশে এলো এসব কবে?</strong> · ইন্টারনেটের সেরা ঠিকানা</div><div class="footer-creator">পরিকল্পনা ও নির্মাণে <strong>উবায়দুর রহমান শিব্বির</strong> ✦</div></div><div class="footer-links"><button data-footer="about">আমাদের সম্পর্কে</button><button data-footer="feedback">মতামত দিন</button><button data-footer="privacy">গোপনীয়তা</button><button id="footerAdmin">Admin</button></div></footer>
 </div>
 <div id="modalRoot"></div><div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const SUPABASE_URL='https://zfsgmzycuvmscqyjjarl.supabase.co';
+const SUPABASE_PUBLISHABLE_KEY='sb_publishable_3_3McPbbZRdjYo8uLo7VAA_oaSuhyDW';
+const supabaseClient=window.supabase.createClient(SUPABASE_URL,SUPABASE_PUBLISHABLE_KEY);
+let cloudUser=null, cloudAdmin=false, cloudReady=false, cloudSyncing=false;
 const SEED_CATEGORIES = [
 {id:'anime',nameBn:'Anime',slug:'anime',descriptionBn:'Anime আবিষ্কার, খবর ও streaming',icon:'🎌',tint:'#ece8ff',featured:true,sortOrder:1,active:true},
 {id:'movies',nameBn:'মুভি ও সিরিজ',slug:'movies-series',descriptionBn:'মুভি, সিরিজ ও entertainment',icon:'🎬',tint:'#ffe9e4',featured:true,sortOrder:2,active:true},
@@ -162,7 +167,44 @@ const priceLabels={free:'ফ্রি',ads:'ফ্রি · বিজ্ঞা�
 const priceClass={free:'',ads:'',limits:'limits',freemium:'freemium',paid:'paid'};
 const priceIsFree=s=>['free','ads','limits','freemium'].includes(s.pricingStatus);
 const hasPaid=s=>s.hasPaidOffering||s.pricingStatus==='paid'||s.pricingStatus==='freemium';
-function saveAll(){localStorage.setItem(STORAGE.sites,JSON.stringify(sites));localStorage.setItem(STORAGE.cats,JSON.stringify(categories));localStorage.setItem(STORAGE.favs,JSON.stringify([...favorites]));localStorage.setItem(STORAGE.recent,JSON.stringify(recent))}
+function saveAll(){localStorage.setItem(STORAGE.sites,JSON.stringify(sites));localStorage.setItem(STORAGE.cats,JSON.stringify(categories));localStorage.setItem(STORAGE.favs,JSON.stringify([...favorites]));localStorage.setItem(STORAGE.recent,JSON.stringify(recent));if(cloudAdmin&&cloudReady)syncDirectoryToCloud().catch(e=>{console.error(e);toast('Cloud sync ব্যর্থ হয়েছে। Supabase/RLS settings যাচাই করুন।')})}
+async function syncDirectoryToCloud(){
+ if(!cloudAdmin||!cloudReady||cloudSyncing)return;cloudSyncing=true;
+ try{
+  const catRows=categories.map(c=>({legacy_id:c.id,name:c.nameBn,slug:c.slug,description:c.descriptionBn||'',sort_order:Number(c.sortOrder)||0,icon:c.icon||'✨',tint:c.tint||'#eceeff',featured:!!c.featured,active:c.active!==false}));
+  if(catRows.length){const {error}=await supabaseClient.from('categories').upsert(catRows,{onConflict:'legacy_id'});if(error)throw error}
+  const {data:dbCats,error:catErr}=await supabaseClient.from('categories').select('id,legacy_id');if(catErr)throw catErr;
+  const catMap=new Map((dbCats||[]).map(c=>[c.legacy_id,c.id]));
+  const siteRows=sites.filter(s=>catMap.has(s.categoryId)).map(s=>({legacy_id:s.id,category_id:catMap.get(s.categoryId),name:s.name,url:s.url,description:s.descriptionBn||'',description_bn:s.descriptionBn||'',pricing:s.pricingStatus||'limits',pricing_status:s.pricingStatus||'limits',is_featured:!!s.featured,featured:!!s.featured,sort_order:Number(s.sortOrder)||0,active:s.active!==false,has_paid_offering:!!s.hasPaidOffering,tags:s.tags||[],favicon_url:s.faviconUrl||'',last_verified_at:s.lastVerifiedAt||null,needs_review:s.needsReview!==false,created_at:s.createdAt||new Date().toISOString(),updated_at:s.updatedAt||new Date().toISOString()}));
+  if(siteRows.length){const {error}=await supabaseClient.from('websites').upsert(siteRows,{onConflict:'legacy_id'});if(error)throw error}
+  const {data:dbSites,error:siteErr}=await supabaseClient.from('websites').select('legacy_id');if(siteErr)throw siteErr;
+  const wantedSites=new Set(sites.map(s=>s.id));const staleSites=(dbSites||[]).filter(s=>s.legacy_id&&!wantedSites.has(s.legacy_id)).map(s=>s.legacy_id);
+  if(staleSites.length){const {error}=await supabaseClient.from('websites').delete().in('legacy_id',staleSites);if(error)throw error}
+  const {data:allCats,error:allCatsErr}=await supabaseClient.from('categories').select('legacy_id');if(allCatsErr)throw allCatsErr;
+  const wantedCats=new Set(categories.map(c=>c.id));const staleCats=(allCats||[]).filter(c=>c.legacy_id&&!wantedCats.has(c.legacy_id)).map(c=>c.legacy_id);
+  if(staleCats.length){const {error}=await supabaseClient.from('categories').delete().in('legacy_id',staleCats);if(error)throw error}
+ }finally{cloudSyncing=false}
+}
+async function loadDirectoryFromCloud(){
+ const {data:dbCats,error:catErr}=await supabaseClient.from('categories').select('*').order('sort_order');if(catErr)throw catErr;
+ const {data:dbSites,error:siteErr}=await supabaseClient.from('websites').select('*').order('sort_order');if(siteErr)throw siteErr;
+ if((dbCats||[]).length){
+  const catIdMap=new Map(dbCats.map(c=>[c.id,c.legacy_id||c.slug]));
+  categories=dbCats.map(c=>({id:c.legacy_id||c.slug,nameBn:c.name,slug:c.slug,descriptionBn:c.description||'',icon:c.icon||'✨',tint:c.tint||'#eceeff',featured:!!c.featured,sortOrder:c.sort_order||0,active:c.active!==false}));
+  sites=(dbSites||[]).map((s,i)=>({id:s.legacy_id||s.id,categoryId:catIdMap.get(s.category_id)||'uncategorized',name:s.name,url:s.url,descriptionBn:s.description_bn||s.description||'',pricingStatus:s.pricing_status||s.pricing||'limits',hasPaidOffering:!!s.has_paid_offering,featured:!!(s.featured??s.is_featured),active:s.active!==false,sortOrder:s.sort_order||i+1,tags:Array.isArray(s.tags)?s.tags:[],faviconUrl:s.favicon_url||'',lastVerifiedAt:s.last_verified_at||'',needsReview:s.needs_review!==false,createdAt:s.created_at||new Date().toISOString(),updatedAt:s.updated_at||new Date().toISOString()}));
+  saveLocalOnly();renderAll();
+ }
+ cloudReady=true;
+}
+function saveLocalOnly(){localStorage.setItem(STORAGE.sites,JSON.stringify(sites));localStorage.setItem(STORAGE.cats,JSON.stringify(categories));localStorage.setItem(STORAGE.favs,JSON.stringify([...favorites]));localStorage.setItem(STORAGE.recent,JSON.stringify(recent))}
+async function initCloud(){
+ try{const {data:{session}}=await supabaseClient.auth.getSession();cloudUser=session?.user||null;
+  const {data:cats,error}=await supabaseClient.from('categories').select('id').limit(1);if(error)throw error;
+  await loadDirectoryFromCloud();
+  if(cloudUser){const {data:adminRow,error:adminErr}=await supabaseClient.from('admin_users').select('user_id').eq('user_id',cloudUser.id).maybeSingle();if(adminErr)throw adminErr;cloudAdmin=!!adminRow;if(cloudAdmin&&!(cats||[]).length){await syncDirectoryToCloud();await loadDirectoryFromCloud()}}
+ }catch(e){console.error('Supabase init:',e);toast('Cloud database-এ সংযোগ হয়নি। আপাতত local data দেখানো হচ্ছে।')}
+}
+
 function toast(msg){const el=$('#toast');el.textContent=msg;el.classList.add('show');clearTimeout(toastTimer);toastTimer=setTimeout(()=>el.classList.remove('show'),2600)}
 function categoryById(id){return categories.find(c=>c.id===id)||{id:'uncategorized',nameBn:'অন্যান্য',icon:'✨',tint:'#edf0ff'}}
 function siteHost(url){try{return new URL(url).hostname.replace(/^www\./,'')}catch(e){return ''}}
@@ -178,16 +220,19 @@ function renderRecent(){const list=recent.map(id=>sites.find(s=>s.id===id&&s.act
 function setupPricingFilters(){const entries=[['all','সব'],['free','একদম ফ্রি'],['limited','ফ্রি ও সীমিত সুবিধা'],['paid','পেইড / সাবস্ক্রিপশন']];$('#pricingFilters').innerHTML=entries.map(([id,label])=>`<button class="filter-pill ${pricingFilter===id?'active':''}" data-price-filter="${id}">${label}</button>`).join('')}
 function renderDirectory(){setupPricingFilters();const all=visibleSites();$('#directoryGrid').innerHTML=all.map(siteCard).join('');$('#directoryEmpty').classList.toggle('hide',all.length>0);$('#resultCount').textContent=bnNum(all.length)+'টি ওয়েবসাইট';$('#resultsCaption').textContent=searchTerm?'“'+searchTerm+'” খুঁজে পাওয়া ফলাফল':selectedCategory!=='all'?categoryById(selectedCategory).nameBn+' ক্যাটাগরির বাছাই করা ওয়েবসাইট':'বাছাই করা website-এ সরাসরি যেতে কার্ডে ক্লিক করুন';$('#directoryTitle').textContent=directoryMode==='favorites'?'পছন্দের তালিকা':directoryMode==='recent'?'সাম্প্রতিক দেখা':directoryMode==='free'?'ফ্রি ওয়েবসাইট':directoryMode==='paid'?'পেইড / সাবস্ক্রিপশন':selectedCategory!=='all'?categoryById(selectedCategory).nameBn:searchTerm?'খোঁজার ফলাফল':'সব ওয়েবসাইট';$('#directorySubtitle').textContent=directoryMode==='paid'?'Paid subscription বা paid features দেওয়া service':directoryMode==='favorites'?'আপনার সংরক্ষণ করা পছন্দের website':'আপনার আগ্রহের জন্য বাছাই করা ভালো website';$('#directoryEyebrow').textContent=directoryMode==='paid'?'PREMIUM PICKS':directoryMode==='favorites'?'YOUR COLLECTION':'CURATED DIRECTORY';$('#categoryFilter').value=selectedCategory}
 function openAdminLogin(){
-  $('#modalRoot').innerHTML=`<div class="modal-backdrop" data-backdrop><div class="modal" style="max-width:430px" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle"><div class="modal-head"><h2 id="adminLoginTitle">🔐 Admin প্রবেশ</h2><button class="close-modal" data-close-modal aria-label="বন্ধ করুন">×</button></div><p class="modal-footnote">Admin Panel খুলতে পাসওয়ার্ড দিন।</p><form id="adminLoginForm"><div class="field"><label for="adminPassword">পাসওয়ার্ড</label><input id="adminPassword" type="password" required autocomplete="current-password" inputmode="numeric" maxlength="32" placeholder="পাসওয়ার্ড লিখুন"/></div><p id="adminLoginError" role="alert" style="display:none;color:#c66f7e;font-size:13px;margin:0 0 14px">পাসওয়ার্ড সঠিক নয়। আবার চেষ্টা করুন।</p><div class="form-actions"><button type="button" class="secondary-btn" data-close-modal>বাতিল</button><button type="submit" class="primary-btn">প্রবেশ করুন</button></div></form><p class="modal-footnote" style="margin-top:14px">নোট: এটি standalone HTML-এর local gate; online hosting-এ প্রকৃত নিরাপত্তার জন্য server-side login দরকার।</p></div></div>`;
-  $('#adminPassword').focus();
+ $('#modalRoot').innerHTML=`<div class="modal-backdrop" data-backdrop><div class="modal" style="max-width:430px" role="dialog" aria-modal="true" aria-labelledby="adminLoginTitle"><div class="modal-head"><h2 id="adminLoginTitle">🔐 Admin প্রবেশ</h2><button class="close-modal" data-close-modal aria-label="বন্ধ করুন">×</button></div><p class="modal-footnote">আপনার Supabase Auth email ও password দিন।</p><form id="adminLoginForm"><div class="field"><label for="adminEmail">ইমেইল</label><input id="adminEmail" type="email" required autocomplete="username" placeholder="আপনার admin email"/></div><div class="field"><label for="adminPassword">পাসওয়ার্ড</label><input id="adminPassword" type="password" required autocomplete="current-password" placeholder="পাসওয়ার্ড লিখুন"/></div><p id="adminLoginError" role="alert" style="display:none;color:#c66f7e;font-size:13px;margin:0 0 14px"></p><div class="form-actions"><button type="button" class="secondary-btn" data-close-modal>বাতিল</button><button type="submit" class="primary-btn">প্রবেশ করুন</button></div></form><p class="modal-footnote" style="margin-top:14px">শুধু Supabase-এর admin_users তালিকায় থাকা account-ই পরিবর্তন করতে পারবে।</p></div></div>`;
+ $('#adminEmail').focus();
 }
-function submitAdminLogin(e){
-  e.preventDefault();
-  const input=$('#adminPassword');
-  if(input.value!=='121212'){
-    const error=$('#adminLoginError');error.style.display='block';input.setAttribute('aria-invalid','true');input.focus();input.select();return;
-  }
-  adminUnlocked=true;closeModal();toast('Admin Panel-এ প্রবেশ করা হয়েছে।');showView('admin');
+async function submitAdminLogin(e){
+ e.preventDefault();const btn=e.target.querySelector('button[type="submit"]'),error=$('#adminLoginError');btn.disabled=true;btn.textContent='যাচাই হচ্ছে…';error.style.display='none';
+ try{
+  const {data,error:authError}=await supabaseClient.auth.signInWithPassword({email:$('#adminEmail').value.trim(),password:$('#adminPassword').value});if(authError)throw authError;
+  cloudUser=data.user;const {data:adminRow,error:adminErr}=await supabaseClient.from('admin_users').select('user_id').eq('user_id',cloudUser.id).maybeSingle();if(adminErr)throw adminErr;
+  if(!adminRow){await supabaseClient.auth.signOut();cloudUser=null;throw new Error('এই account-কে admin অনুমতি দেওয়া হয়নি।')}
+  cloudAdmin=true;await loadDirectoryFromCloud();if(!categories.length){categories=clone(SEED_CATEGORIES);sites=clone(SEED_SITES);await syncDirectoryToCloud();await loadDirectoryFromCloud()}
+  adminUnlocked=true;closeModal();toast('Admin হিসেবে নিরাপদে প্রবেশ করেছেন।');showView('admin');
+ }catch(err){error.textContent=err.message==='Invalid login credentials'?'ইমেইল বা পাসওয়ার্ড সঠিক নয়।':(err.message||'Login করা যায়নি।');error.style.display='block'}
+ finally{btn.disabled=false;btn.textContent='প্রবেশ করুন'}
 }
 function showView(view,opts={}){if(!['home','directory','categories','admin'].includes(view))view='home';if(view==='admin'&&!adminUnlocked){openAdminLogin();return}currentView=view;$$('.view').forEach(v=>v.classList.remove('active'));if(view==='home')$('#homeView').classList.add('active');if(view==='directory')$('#directoryView').classList.add('active');if(view==='categories')$('#categoriesView').classList.add('active');if(view==='admin')$('#adminView').classList.add('active');$$('.nav-btn').forEach(b=>b.classList.toggle('active',(view==='home'&&b.dataset.view==='home')||(view==='categories'&&b.dataset.view==='categories')||(view==='directory'&&b.dataset.view===directoryMode)));if(view==='directory')renderDirectory();if(view==='categories')renderCategories();if(view==='admin')renderAdmin();if(opts.scroll!==false)window.scrollTo({top:0,behavior:'smooth'})}
 function goDirectory(mode='all',category='all'){directoryMode=mode;selectedCategory=category;pricingFilter='all';searchTerm='';$('#heroSearch').value='';showView('directory')}
@@ -261,9 +306,10 @@ $('#adminSiteSearch').addEventListener('input',renderAdminSites);$('#adminCatSea
 // Home page direct category click is delegated above; keyboard shortcut focuses search.
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&$('#modalRoot').innerHTML)closeModal();if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();showView('home');$('#heroSearch').focus()} });
 $('#year').textContent=new Date().getFullYear();
-// Validate restored local data, then initialize the application.
-try{if(!Array.isArray(categories)||!Array.isArray(sites))throw new Error();}catch{categories=clone(SEED_CATEGORIES);sites=clone(SEED_SITES);saveAll()}
+// Validate local fallback data, then load shared Supabase data.
+try{if(!Array.isArray(categories)||!Array.isArray(sites))throw new Error();}catch{categories=clone(SEED_CATEGORIES);sites=clone(SEED_SITES);saveLocalOnly()}
 renderAll();
+initCloud();
 </script>
 </body>
 </html>
